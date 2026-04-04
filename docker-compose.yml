@@ -1,0 +1,79 @@
+# ── DisruptShield — Local Development Stack ──
+# Services: PostgreSQL · FastAPI Backend · React Frontend
+# Usage:  docker-compose up --build
+
+services:
+  # ── PostgreSQL Database ──
+  postgres:
+    image: postgres:15-alpine
+    container_name: disruptshield-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-disruptshield}
+      POSTGRES_USER: ${POSTGRES_USER:-dsuser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dspassword}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-dsuser} -d ${POSTGRES_DB:-disruptshield}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - disruptshield
+
+  # ── FastAPI Backend ──
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: disruptshield-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-dsuser}:${POSTGRES_PASSWORD:-dspassword}@postgres:5432/${POSTGRES_DB:-disruptshield}
+      JWT_SECRET_KEY: ${SECRET_KEY:-disruptshield-local-dev-secret-key}
+      JWT_ALGORITHM: ${ALGORITHM:-HS256}
+      JWT_ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-480}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      FRONTEND_URL: http://localhost:3000
+      CORS_ORIGINS: "http://localhost:3000,http://localhost:5173,http://localhost"
+    ports:
+      - "8000:8000"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "⏳ Running database migrations..."
+        alembic upgrade head
+        echo "✅ Migrations complete. Starting server..."
+        gunicorn main:app -k uvicorn.workers.UvicornWorker -w 2 -b 0.0.0.0:8000 --timeout 120 --access-logfile -
+    networks:
+      - disruptshield
+
+  # ── React Frontend ──
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: http://localhost:8000
+    container_name: disruptshield-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "3000:80"
+    networks:
+      - disruptshield
+
+volumes:
+  pgdata:
+    driver: local
+
+networks:
+  disruptshield:
+    driver: bridge

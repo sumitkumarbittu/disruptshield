@@ -5,9 +5,10 @@ Parametric Income Protection for Food Delivery Partners
 
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
-import app.db.session as app_db_session
+from sqlalchemy import text
 
 from app.core.config import settings
+from app.db.session import get_db
 from app.api import riders, policies, premium, claims, payouts, events, dashboard, auth, admin
 
 # Import all models so they are registered with SQLAlchemy
@@ -44,32 +45,39 @@ def create_app() -> FastAPI:
     app.include_router(auth.router)
     app.include_router(admin.router)
 
-    # Required health checks for Render Platform constraints
+    @app.get("/", tags=["Health"])
+    def root():
+        return {
+            "name": settings.APP_NAME,
+            "version": settings.APP_VERSION,
+            "status": "running",
+        }
+
     @app.get("/health", tags=["Health"])
     def basic_health_check():
         return {"api_status": "healthy"}
 
     @app.get("/health/db", tags=["Health"])
-    def db_health_check(db=Depends(app_db_session.get_db)):
+    def db_health_check(db=Depends(get_db)):
         try:
-            db.execute(app_db_session.text("SELECT 1"))
+            db.execute(text("SELECT 1"))
             return {"db_status": "connected"}
         except Exception as e:
             return {"db_status": "disconnected", "error": str(e)}
 
     @app.get("/health/system", tags=["Health"])
-    def system_health_check(db=Depends(app_db_session.get_db)):
+    def system_health_check(db=Depends(get_db)):
         from app.models.rider import Rider
         from app.models.disruption_event import DisruptionEvent
         from app.models.claim import Claim
         from app.models.payout import Payout
-        
+
         try:
             total_riders = db.query(Rider).count()
             total_events = db.query(DisruptionEvent).count()
             total_claims = db.query(Claim).count()
             total_payouts = db.query(Payout).count()
-            
+
             return {
                 "api_status": "healthy",
                 "db_status": "connected",
@@ -77,8 +85,8 @@ def create_app() -> FastAPI:
                     "total_riders": total_riders,
                     "total_events": total_events,
                     "total_claims": total_claims,
-                    "total_payouts": total_payouts
-                }
+                    "total_payouts": total_payouts,
+                },
             }
         except Exception as e:
             return {"api_status": "healthy", "db_status": "disconnected", "error": str(e)}
@@ -87,3 +95,4 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
+
